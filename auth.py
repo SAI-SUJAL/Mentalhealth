@@ -1,130 +1,107 @@
-import pandas as pd
-import uuid
-from huggingface_hub import InferenceClient
-from flask import Flask, render_template, request, redirect, url_for, session, flash
-import secrets
-from rag_query import rag_query  # Import your RAG query logic
+import streamlit as st
+from rag_query import rag_query  # Import the rag_query function from rag_query.py
 
-# Hugging Face Client Setup
-HF_TOKEN = "hhf_wLKmaqGneiqxqiVtdPMNhWywjnOThTzAEa"
-client = InferenceClient("mistralai/Mistral-7B-Instruct-v0.3", token=HF_TOKEN)
+# Set page config
+st.set_page_config(page_title="Mental Health Chatbot", page_icon="🤖", layout="wide")
+st.title("Mental Health Chatbot")
+st.subheader("Ask me something related to mental health:")
 
-app = Flask(__name__)
-app.secret_key = secrets.token_hex(16)  # Secure secret key
+# Initialize session state for storing chat history if not already initialized
+if 'messages' not in st.session_state:
+    st.session_state['messages'] = []
 
-# Dummy user credentials
-USERS = {
-    'user1': 'password1',
-    'user2': 'password2',
-    'sujal': 'hero',
-    'kmit': 'kmit123',
-    'hansika': 'vardhini',
-    'shruthika':'shamarthi',
-    }
+if 'not_satisfied' not in st.session_state:
+    st.session_state['not_satisfied'] = False
 
-def generate_initial_message():
-    """Generate an initial welcome message for the chatbot"""
-    return (
-        "Welcome to Mental Health Support. I'm here to listen and provide compassionate support. "
-        "Feel free to share your thoughts or concerns, and I'll do my best to help you."
-    )
-
-@app.route('/', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        
-        if username in USERS and USERS[username] == password:
-            session['username'] = username
-            # Initialize chat with a welcome message
-            session['chat_history'] = [
-                {'role': 'bot', 'content': generate_initial_message()}
-            ]
-            session['not_satisfied'] = False  # Initialize satisfaction state
-            return redirect(url_for('chatbot'))
+# Function to display conversation in the main chat area
+def display_conversation():
+    for message in st.session_state['messages']:
+        if message['role'] == 'user':
+            st.chat_message("user").markdown(message['content'])
         else:
-            return render_template('login.html', error='Invalid credentials')
-    return render_template('login.html')
+            st.chat_message("assistant").markdown(message['content'])
 
-@app.route('/chatbot', methods=['GET', 'POST'])
-def chatbot():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    
-    session.setdefault('chat_history', [
-        {'role': 'bot', 'content': generate_initial_message()}
-    ])
-    session.setdefault('not_satisfied', False)
-    # Handle "Clear Chat History" button
-    if request.method == 'POST' and 'clear_history' in request.form:
-        session['chat_history'] = [
-            {'role': 'bot', 'content': generate_initial_message()}
-        ]  # Reset to the initial bot message
-        session['not_satisfied'] = False  # Reset satisfaction flag
-        session.modified = True
-        return render_template('chatbot.html', chat_history=session.get('chat_history', []))
+# Handle user input
+if prompt := st.chat_input("What is your question?"):
+    # Display user message in the chat message container
+    st.session_state['messages'].append({"role": "user", "content": prompt})
 
-    # Handle "Not Satisfied" button
-    if request.method == 'POST' and 'not_satisfied' in request.form:
-        if len(session['chat_history']) >= 1:
-            # Extract the last user message
-            last_user_message = session['chat_history'][-1]['content']
-            
-            # Regenerate response
-            new_response = rag_query(last_user_message)
-            
-            if new_response:
-                # Replace the last bot message with the new response
-                session['chat_history'][-1] = {'role': 'bot', 'content': new_response}
-            else:
-                # Add a fallback if no new response
-                session['chat_history'][-1] = {
-                    'role': 'bot', 
-                    'content': "Sorry, I couldn't provide a response."
-                }
-            
-            session.modified = True
-        
-        return render_template('chatbot.html', chat_history=session.get('chat_history', []))
-    
-    # Existing user query handling remains the same
-    if request.method == 'POST' and 'user_message' in request.form:
-        user_message = request.form['user_message']
-        session['chat_history'].append({'role': 'user', 'content': user_message})
-        
-        try:
-            bot_response = rag_query(user_message)
-        except Exception as e:
-            print(f"[ERROR] Error querying LLM: {e}")
-            bot_response = "I'm here to support you. Could you rephrase your question?"
-        
-        if not bot_response or bot_response.strip() == "":
-            bot_response = (
-                "I'm here to listen. Could you tell me more about what you're experiencing?"
-            )
-        
-        session['chat_history'].append({'role': 'bot', 'content': bot_response})
-        session.modified = True
-    
-    return render_template('chatbot.html', chat_history=session.get('chat_history', []))
+    # Get the assistant's response from rag_query
+    response = rag_query(prompt)
 
+    # Ensure the response is not empty or None
+    if response:
+        # Display assistant response in chat message container
+        st.session_state['messages'].append({"role": "assistant", "content": response})
+    else:
+        st.session_state['messages'].append({"role": "assistant", "content": "Sorry, I couldn't provide a response."})
 
+    # Display the updated conversation after the new message
+    display_conversation()
 
+# Sidebar for additional controls (Clear chat history and Not Satisfied button)
+with st.sidebar:
+    st.header("Options")
 
+    # Handle "Not Satisfied" Button
+    if st.button("Not Satisfied"):
+        # Set the flag to trigger response regeneration
+        st.session_state['not_satisfied'] = True
 
+    # Clear Chat History button
+    if st.button("Clear Chat History"):
+        st.session_state['messages'] = []  # Clear the conversation history
+        st.session_state['not_satisfied'] = False  # Reset the not_satisfied flag
+        # No rerun needed, simply update the UI with the cleared state
+        st.rerun()  # Force a re-run of the app to reset the state
+  # Reset the state by forcing a re-run (this is okay to use here for a full reset)
 
+# Process "Not Satisfied" logic if set to True
+if st.session_state['not_satisfied']:
+    if st.session_state['messages']:
+        last_user_message = st.session_state['messages'][-1]['content']
+        new_response = rag_query(last_user_message)
+        if new_response:
+            # Remove the last assistant message to replace with the new response
+            st.session_state['messages'][-1] = {"role": "assistant", "content": new_response}
+        else:
+            # Add a fallback if no new response
+            st.session_state['messages'][-1] = {"role": "assistant", "content": "Sorry, I couldn't provide a response."}
 
+    # Reset the "Not Satisfied" flag to avoid redundant updates
+    st.session_state['not_satisfied'] = False
 
+    # Display the updated conversation with the new response
+    display_conversation()
+# Process "Not Satisfied" logic if set to True
+# if st.session_state['not_satisfied']:
+#     if st.session_state['messages']:
+#         last_user_message = st.session_state['messages'][-1]['content']
 
+#         # Adjust the prompt to be even more direct and empathetic
+#         strict_support_prompt = (
+#             "The user is not satisfied with the previous response and needs a more empathetic, "
+#             "personalized answer. You should connect deeply with the user's emotions and offer a response "
+#             "that addresses their specific concerns, providing actionable and compassionate advice. Avoid generic answers. "
+#             "You should acknowledge their feelings, show understanding, and offer the best possible guidance to help them. \n\n"
+#             "User query: {query}"
+#         )
 
+#         # Format the prompt with the user's query
+#         formatted_prompt = strict_support_prompt.format(query=last_user_message)
 
+#         # Generate a more strict and supportive response
+#         response = generator(formatted_prompt, max_length=150, num_return_sequences=1)
 
+#         # Replace the last assistant message with the new strict and supportive response
+#         if response:
+#             st.session_state['messages'][-1] = {"role": "assistant", "content": response[0]['generated_text'].strip()}
+#         else:
+#             # Fallback if no new response
+#             st.session_state['messages'][-1] = {"role": "assistant", "content": "I understand your concerns, and I want to help. Let's address this together."}
 
-@app.route('/logout', methods=['GET', 'POST'])
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
+#     # Reset the "Not Satisfied" flag to avoid redundant updates
+#     st.session_state['not_satisfied'] = False
 
-if __name__ == '__main__':
-    app.run(debug=True)
+#     # Display the updated conversation with the new response
+#     display_conversation()
