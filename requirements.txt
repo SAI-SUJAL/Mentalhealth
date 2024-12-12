@@ -1,0 +1,6 @@
+Flask==2.2.3
+huggingface-hub==0.16.3
+langchain==0.0.200
+pandas==1.5.3
+streamlit==1.16.0
+
